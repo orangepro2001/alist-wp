@@ -87,3 +87,19 @@ func TestBasePathMount(t *testing.T) {
 		}
 	}
 }
+
+// WebDAV 随服务装配: 经前缀挂载后可 PROPFIND 到引擎里的文件。
+func TestDAVMounted(t *testing.T) {
+	hs := newBasePathServer(t, "/baidu")
+	req, _ := http.NewRequest("PROPFIND", hs.URL+"/baidu/dav/", nil)
+	req.Header.Set("Depth", "1")
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	b, _ := io.ReadAll(r.Body)
+	if r.StatusCode != 207 || !strings.Contains(string(b), "readme.txt") {
+		t.Fatalf("PROPFIND /baidu/dav/ = %d %s", r.StatusCode, b)
+	}
+}

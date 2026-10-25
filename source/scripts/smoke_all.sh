@@ -5,6 +5,7 @@
 #   3) 文件列表/配额(桩直链)                  → FILES_OK / QUOTA_OK
 #   4) 签名下载直链 + Range/206               → DL_OK
 #   5) 三段式上传(init→chunk→complete)        → UPLOAD_OK
+#   5b) WebDAV PROPFIND/Range GET/PUT         → DAV_PROPFIND_OK / DAV_RANGE_OK / DAV_PUT_OK
 #   6) 空载 RSS 采样 ≤100MB(NFR-03)           → RSS_OK (<N> KB)
 #   7) 双平台产物存在性检查(build.sh 产物)    → ARTIFACTS_OK
 # 全部通过输出 SMOKE_ALL_OK, 退出码 0。
@@ -128,6 +129,27 @@ else
   else
     echo "FAIL: 上传链异常 chunk=$CH complete=$CM"; FAIL=1
   fi
+fi
+
+# ---------- 7b. WebDAV(OpenList 挂载入口): PROPFIND / Range GET / PUT ----------
+P=$(curl -s -X PROPFIND -H 'Depth: 1' "http://$LISTEN/dav/")
+if echo "$P" | grep -q '冒烟文件.bin' && echo "$P" | grep -q 'collection'; then
+  echo "DAV_PROPFIND_OK"
+else
+  echo "FAIL: PROPFIND 异常: $P"; FAIL=1
+fi
+code=$(curl -s -o "$WORK/dav_range.bin" -w '%{http_code}' -H "Range: bytes=0-99" \
+  "http://$LISTEN/dav/%E5%86%92%E7%83%9F%E6%96%87%E4%BB%B6.bin")
+if [[ "$code" == "206" && -s "$WORK/dav_range.bin" ]]; then
+  echo "DAV_RANGE_OK"
+else
+  echo "FAIL: DAV Range GET 应 206 且有内容, got $code"; FAIL=1
+fi
+code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary 'dav-smoke' "http://$LISTEN/dav/w9dav.bin")
+if [[ "$code" == "201" || "$code" == "204" ]]; then
+  echo "DAV_PUT_OK ($code)"
+else
+  echo "FAIL: DAV PUT 应 201/204, got $code"; FAIL=1
 fi
 
 # ---------- 8. 空载 RSS 采样 ≤100MB(NFR-03) ----------

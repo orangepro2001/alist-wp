@@ -192,6 +192,30 @@ func TestProxyRange206(t *testing.T) {
 	}
 }
 
+// --- 2b. Trusted 入口: 无签名也可下载(WebDAV 用), Range 仍透传; 普通入口仍拒绝无签名 ---
+func TestProxyServeDownloadTrusted(t *testing.T) {
+	clock := &testClock{now: time.Now()}
+	src := newStubSource(t, 1000, "netdisk")
+	res := &stubResolver{srvURL: src.srv.URL + "/dlink", ua: "netdisk", size: 1000}
+	p := newTestProxy(t, []byte("k"), res.resolve, clock, 3)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/dav/f.bin", nil) // 无 exp/token
+	req.Header.Set("Range", "bytes=100-199")
+	if err := p.ServeDownloadTrusted(rec, req, "/f.bin"); err != nil {
+		t.Fatalf("ServeDownloadTrusted: %v", err)
+	}
+	if rec.Code != 206 || rec.Body.String() != string(src.body[100:200]) {
+		t.Fatalf("Trusted Range 不对: code=%d len=%d", rec.Code, rec.Body.Len())
+	}
+	if err := p.ServeDownload(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/dl", nil), "/f.bin"); !errors.Is(err, ErrBadToken) {
+		t.Fatalf("无签名走普通入口应 ErrBadToken, got %v", err)
+	}
+	if err := p.ServeDownloadTrusted(httptest.NewRecorder(), httptest.NewRequest("GET", "/x", nil), "relative"); err == nil {
+		t.Fatal("非绝对路径应拒绝")
+	}
+}
+
 // --- 3. Range 边界: 起点越界/末段 ---
 func TestProxyRangeEdge(t *testing.T) {
 	clock := &testClock{now: time.Now()}

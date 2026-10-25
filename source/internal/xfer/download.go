@@ -19,6 +19,8 @@ type Proxy interface {
 	//   - 百度断流: 内部按已发字节数对百度重新 Range 请求续写, 浏览器连接不断
 	//   - dlink 失效: 重解一次; 仍失败回 502 + 中文错误
 	ServeDownload(w http.ResponseWriter, r *http.Request, pcspath string) error
+	// ServeDownloadTrusted 同 ServeDownload, 但不校验签名 token(调用方保证可信, 供 WebDAV GET 使用)。
+	ServeDownloadTrusted(w http.ResponseWriter, r *http.Request, pcspath string) error
 	// ResolveForURL 生成带签名 token 的下载 URL(FR-39, 30min 有效)。
 	ResolveForURL(pcspath string) (signedURL string, err error)
 	// PumpLocal W8/FR-40: 服务器侧把单个网盘文件拉到终态(流式, 内容不落盘),

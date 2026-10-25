@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"baidupcs-web/internal/api"
+	"baidupcs-web/internal/davfs"
 	"baidupcs-web/internal/sharetmp"
 	"baidupcs-web/internal/tempmgr"
 	"baidupcs-web/internal/uploader"
@@ -324,6 +325,16 @@ func newServer(opt Options) (*Server, error) {
 	mux.HandleFunc("POST /api/match", tools.HandleMatch)
 	mux.HandleFunc("POST /api/export", tools.HandleExport)
 	mux.HandleFunc("POST /api/tool/cipher", tools.HandleToolCipher)
+
+	// WebDAV(给 OpenList/Alist 的 WebDAV 驱动挂载): 下载走流式代理(免签名, 仅回环可达),
+	// 上传落 tempmgr 临时文件后入同一上传队列(秒传优先)。PUT 同名一律覆盖(WebDAV 语义)。
+	mux.Handle("/dav/", davfs.New(davfs.Config{
+		Engine:   eng,
+		Uploads:  xf,
+		Temp:     tm,
+		Download: xf.Proxy(),
+		Prefix:   "/dav",
+	}))
 
 	// 前端 SPA(go:embed): /assets/* 静态文件, 其余回落 index.html(hash 路由单入口)。
 	// index.html 注入 <base href=BasePath/>, 前端一律用相对路径(api/...、assets/...)。

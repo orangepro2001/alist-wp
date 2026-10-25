@@ -139,7 +139,21 @@ func (p *proxy) ServeDownload(w http.ResponseWriter, r *http.Request, pcspath st
 	if err := p.verify(pcspath, r.URL.Query().Get("exp"), r.URL.Query().Get("token")); err != nil {
 		return err
 	}
+	return p.serve(w, r, pcspath)
+}
 
+// ServeDownloadTrusted 同 ServeDownload 但跳过 exp/token 签名校验: 调用方(WebDAV)已自行
+// 保证请求可信(仅回环监听, 经 tailscale 暴露)。其余(信号量/Range 透传/断流续取)完全一致。
+func (p *proxy) ServeDownloadTrusted(w http.ResponseWriter, r *http.Request, pcspath string) error {
+	pcspath = strings.TrimSpace(pcspath)
+	if pcspath == "" || !strings.HasPrefix(pcspath, "/") {
+		return badRequest("缺少 path 参数")
+	}
+	return p.serve(w, r, pcspath)
+}
+
+// serve 并发信号量 + 任务行 + 流式透传(签名已校验或调用方可信)。
+func (p *proxy) serve(w http.ResponseWriter, r *http.Request, pcspath string) error {
 	// 任务行 + 并发信号量(排队可见)
 	name := path.Base(pcspath)
 	task, release, err := p.q.acquire(r.Context(), pcspath, name, 0)
