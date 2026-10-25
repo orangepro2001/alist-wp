@@ -3,15 +3,12 @@ package server
 import (
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
-	"time"
 )
 
-// 中间件链: recover → 限速(upload 10/min/IP) → 脱敏分级日志(INFO/WARN/ERROR, 凭证前4后4)。
+// 中间件链: recover → 脱敏分级日志(INFO/WARN/ERROR, 凭证前4后4)。
 
 // statusWriter 包装 ResponseWriter 记录响应码, 供日志中间件使用。
 type statusWriter struct {
@@ -218,91 +215,6 @@ func logMiddleware(next http.Handler) http.Handler {
 		}
 		LogAt(level, "%s %s %d", r.Method, r.URL.Path, sw.status)
 	})
-}
-
-// ---------------------------------------------------------------------------
-// W9 限速(FR-39②): /api/upload/init 每来源 IP 10 次/分钟。
-// 简单滑窗计数即可; 超限 429 RATE_LIMITED。
-// ---------------------------------------------------------------------------
-
-// RateLimitConfig 限速器参数(测试注入短窗口/小上限)。
-type RateLimitConfig struct {
-	Limit   int           // 窗口内允许次数
-	Window  time.Duration // 滑窗长度
-	NowFunc func() time.Time
-}
-
-// rateLimiter 按 IP 的固定滑窗计数器(临界行为=固定窗, 满足 10/min 基线)。
-type rateLimiter struct {
-	mu      sync.Mutex
-	limit   int
-	window  time.Duration
-	now     func() time.Time
-	hits    map[string][]time.Time
-}
-
-// newRateLimiter 构造限速器。
-func newRateLimiter(cfg RateLimitConfig) *rateLimiter {
-	if cfg.Limit <= 0 {
-		cfg.Limit = 10
-	}
-	if cfg.Window <= 0 {
-		cfg.Window = time.Minute
-	}
-	if cfg.NowFunc == nil {
-		cfg.NowFunc = time.Now
-	}
-	return &rateLimiter{limit: cfg.Limit, window: cfg.Window, now: cfg.NowFunc, hits: map[string][]time.Time{}}
-}
-
-// allow 记录并报告该 key 是否放行。
-func (rl *rateLimiter) allow(key string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := rl.now()
-	cutoff := now.Add(-rl.window)
-	keep := rl.hits[key][:0]
-	for _, t := range rl.hits[key] {
-		if t.After(cutoff) {
-			keep = append(keep, t)
-		}
-	}
-	if len(keep) >= rl.limit {
-		rl.hits[key] = keep
-		return false
-	}
-	rl.hits[key] = append(keep, now)
-	return true
-}
-
-// clientIP 提取来源 IP(仅 RemoteAddr 的 host 部分; 不信任 XFF, 防伪造绕限速)。
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-// rateLimitMiddleware 对命中前缀的路径按 IP 限速; 超限返回 429 RATE_LIMITED(FR-39②)。
-func rateLimitMiddleware(limiters map[string]*rateLimiter) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			for prefix, rl := range limiters {
-				if strings.HasPrefix(r.URL.Path, prefix) {
-					if !rl.allow(clientIP(r)) {
-						LogAt("WARN", "rate limited ip=%s path=%s", MaskSecret(clientIP(r)), r.URL.Path)
-						w.Header().Set("Content-Type", "application/json; charset=utf-8")
-						w.WriteHeader(http.StatusTooManyRequests)
-						_, _ = io.WriteString(w, `{"code":"RATE_LIMITED","message":"请求过于频繁, 请稍后再试(每分钟 10 次)"}`)
-						return
-					}
-					break
-				}
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 // chain 按声明顺序包裹: chain(h, a, b) 等价 a(b(h))。

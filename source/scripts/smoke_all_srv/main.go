@@ -1,4 +1,4 @@
-// smoke_all_srv.go — W9 全量回归冒烟辅助: 真实 server 装配 + 全功能桩 Engine。
+// smoke_all_srv.go — 全量回归冒烟辅助: 真实 server 装配 + 桩 Engine。
 // 桩行为(注入数据驱动, 与 W4~W8 桩模式同源):
 //   Quota:  1TB/10GB
 //   List:   "/" → 照片(目录)+冒烟文件.bin(65536B); 其他目录 NOT_FOUND
@@ -38,7 +38,13 @@ func (stubEngine) List(_ context.Context, dir string, _, _ int, _, _ string) (xe
 	}, nil
 }
 func (stubEngine) Meta(_ context.Context, p string) (*xengine.FileDirectory, error) {
-	return &xengine.FileDirectory{Path: p, Filename: strings.TrimPrefix(p, "/"), Size: 65536}, nil
+	switch p {
+	case "/照片":
+		return &xengine.FileDirectory{Path: p, Filename: "照片", Isdir: true}, nil
+	case "/冒烟文件.bin":
+		return &xengine.FileDirectory{Path: p, Filename: "冒烟文件.bin", Size: 65536}, nil
+	}
+	return nil, &xengine.Error{Code: xengine.ErrNotFound, Message: "不存在"}
 }
 func (stubEngine) ResolveDlink(_ context.Context, p string) (*xengine.DownloadLink, error) {
 	return &xengine.DownloadLink{

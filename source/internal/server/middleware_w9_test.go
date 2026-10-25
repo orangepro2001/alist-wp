@@ -1,78 +1,11 @@
 package server
 
-// middleware_w9_test.go W9: 限速(FR-39② 10/min/IP)与凭证脱敏(FR-38)单测。
-// 纪律: 定时用例注入短窗口(clock stub), 不真实等待。
+// middleware_w9_test.go W9: 凭证脱敏(FR-38)与日志分级单测。
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
-
-// fixedClock 可步进的假时钟。
-type fixedClock struct{ t time.Time }
-
-func (c *fixedClock) Now() time.Time { return c.t }
-func (c *fixedClock) Add(d time.Duration) { c.t = c.t.Add(d) }
-
-// TestRateLimitWindow 11 次请求第 11 次拒绝; 窗口滑过后恢复(短窗口注入)。
-func TestRateLimitWindow(t *testing.T) {
-	clk := &fixedClock{t: time.Now()}
-	restore := setupRateLimitersForTest(RateLimitConfig{Limit: 3, Window: 200 * time.Millisecond, NowFunc: clk.Now})
-	defer restore()
-
-	rl := rateLimiters["/api/upload/"]
-	for i := 0; i < 3; i++ {
-		if !rl.allow("10.1.1.1") {
-			t.Fatalf("第 %d 次请求不应被限", i+1)
-		}
-	}
-	if rl.allow("10.1.1.1") {
-		t.Fatal("超限请求应被拒绝")
-	}
-	// 不同 IP 互不影响
-	if !rl.allow("10.1.1.2") {
-		t.Fatal("其他 IP 不应受影响")
-	}
-	// 窗口滑过 → 恢复
-	clk.Add(250 * time.Millisecond)
-	if !rl.allow("10.1.1.1") {
-		t.Fatal("窗口滑过后应恢复放行")
-	}
-}
-
-// TestRateLimitMiddleware429 中间件对 upload 超限返回 429 RATE_LIMITED(FR-39② 验收③)。
-func TestRateLimitMiddleware429(t *testing.T) {
-	restore := setupRateLimitersForTest(RateLimitConfig{Limit: 2, Window: time.Minute})
-	defer restore()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
-	h := rateLimitMiddleware(rateLimiters)(next)
-
-	req := httptest.NewRequest("POST", "/api/upload/init", nil)
-	req.RemoteAddr = "9.9.9.9:5555"
-	if code := hit(h, req); code != 200 {
-		t.Fatalf("第 1 次 = %d, want 200", code)
-	}
-	req2 := req.Clone(req.Context())
-	if code := hit(h, req2); code != 200 {
-		t.Fatalf("第 2 次 = %d, want 200", code)
-	}
-	req3 := req.Clone(req.Context())
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req3)
-	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "RATE_LIMITED") {
-		t.Fatalf("第 3 次应 429 RATE_LIMITED, got %d %s", rec.Code, rec.Body.String())
-	}
-}
-
-func hit(h http.Handler, r *http.Request) int {
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, r)
-	return rec.Code
-}
 
 // TestMaskSecret FR-38: 前 4 后 4; 短值全掩码; 空值不变。
 func TestMaskSecret(t *testing.T) {

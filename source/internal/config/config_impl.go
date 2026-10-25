@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func load(opt Options) (*Config, error) {
@@ -52,7 +51,6 @@ func load(opt Options) (*Config, error) {
 	if opt.Listen != "" {
 		c.Listen = opt.Listen
 	}
-	c.BasePath = normalizeBasePath(opt.BasePath)
 	c.DataDir = dataDir
 	c.TmpDir = tmpDir
 	c.path = path
@@ -131,13 +129,4 @@ func (c *Config) save() error {
 		return fmt.Errorf("原子替换配置 %s: %w", c.path, err)
 	}
 	return nil
-}
-
-// normalizeBasePath 规范化 URL 前缀: "" 或 "/" → ""; 其余保证前导 "/"、无尾部 "/"。
-func normalizeBasePath(p string) string {
-	p = strings.Trim(strings.TrimSpace(p), "/")
-	if p == "" {
-		return ""
-	}
-	return "/" + p
 }

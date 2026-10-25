@@ -4,44 +4,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Layout
 
-The repo root is a release package (README.md, DEPLOY.md, `bin/`, `docs/`, `SHA256SUMS.txt`). The Go module (`baidupcs-web`) lives in **`source/`** — there is no `go.mod` at the root, so run all `go` commands from `source/`. Not a git repo.
+The repo root is the git repo (remote `git@github.com:orangepro2001/alist-wp.git`, branch `main`). The Go module (`baidupcs-web`) lives in **`source/`** — there is no `go.mod` at the root, so run all `go` commands from `source/`. `docs/` holds early design notes from when the project still had its own web UI (historical; password login, SPA, `/api/*` file endpoints no longer exist).
 
-`baidupcs-web` is a single-binary web client for Baidu Netdisk, wrapping the upstream CLI library `github.com/qjfoidnh/BaiduPCS-Go` (pinned v4.0.2). The frontend is plain static files embedded with `go:embed`; there is no Node/npm and no frontend build step.
+`baidupcs-web` exposes Baidu Netdisk as **WebDAV** (`/dav/`) for OpenList/Alist to mount; OpenList is the only user-facing front end (tailscale `/files`). It wraps the upstream CLI library `github.com/qjfoidnh/BaiduPCS-Go` (pinned v4.0.2). No web pages, no Node/npm.
 
 ## Commands (run in `source/`)
 
 ```bash
-go build ./... && go vet ./... && go test ./...      # full regression (also run with -race for xfer/server changes)
-go test ./internal/xfer -run TestName -race          # single test / package
-bash scripts/build.sh                                # CGO_ENABLED=0 linux/amd64+arm64 -> source/bin/ (version via -X main.version)
-bash scripts/dev.sh                                  # dev mode: go run, 127.0.0.1:8080, /baidu prefix, DEBUG logs
-bash scripts/smoke_all.sh                            # end-to-end smoke with stub download source; success prints SMOKE_ALL_OK
-bash scripts/smoke_{dl,upload,sharetmp}.sh           # individual smoke scripts
+go build ./... && go vet ./... && go test -race ./...   # full regression
+go test ./internal/davfs -run TestPut -race             # single test / package
+bash scripts/build.sh                                   # CGO_ENABLED=0 linux/amd64+arm64 -> source/bin/ (version via -X main.version)
+bash scripts/smoke_all.sh                               # end-to-end with stub engine + stub download source; prints SMOKE_ALL_OK
+bash scripts/dev.sh                                     # dev mode: go run, 127.0.0.1:8080, DEBUG logs
+go run ./cmd/baidupcs-web account list|add|switch|rm    # account management (HTTP client of the running server)
 ```
 
-Scripts hardcode `GO=/usr/local/go/bin/go` (build.sh honours `$GO`). Run the server: `bin/baidupcs-web-linux-amd64` (defaults: `-listen 127.0.0.1:8080 -base-path /baidu`; env `BPW_LISTEN` / `BPW_BASE_PATH` change the defaults). It is exposed on the tailnet via `tailscale serve --bg --set-path /baidu http://127.0.0.1:8080/baidu` (the mount path is stripped by tailscale, so the target must include `/baidu`); the raw port is loopback-only. If module download fails, `go env -w GOPROXY=https://goproxy.cn,direct`. Don't start long-lived server processes on the user's behalf — service lifecycle belongs to the user.
+Scripts hardcode `GO=/usr/local/go/bin/go` in smoke_all.sh (build.sh honours `$GO`). If module download fails, `go env -w GOPROXY=https://goproxy.cn,direct`. Don't start long-lived server processes on the user's behalf unless asked — service lifecycle belongs to the user.
+
+## Exposure rule (important)
+
+All services are reachable **only** through the tailscale https domain, via `tailscale serve`; never open extra paths/ports to the network. This server listens on `127.0.0.1:8080` only (plumbing for OpenList) and has **no app-level auth**. Only add `tailscale serve` paths the user asked for; don't touch existing ones (`/`, `/dsh`, `/claude`, `/report`, `:8443`). Account management is CLI-only for this reason.
 
 ## Architecture
 
-Read `docs/design/baidupcs-web.md` (architecture, §0 upstream findings, §11 wave table) and `docs/requirements-baidupcs-web.md` (FR-xx / NFR-xx IDs referenced throughout code comments). `docs/dev/2026-10-24-baidupcs-web.md` is the bug/lessons log — check it before touching related areas.
-
-Layering under `source/internal/`:
-- `cmd/baidupcs-web/main.go` — flags/env only; all logic is in `internal/*`.
-- `server` — Go 1.22+ stdlib `ServeMux` routing + hand-rolled middleware chain: recover → rate limit (upload, 10/min/IP) → leveled, redacted logging. **There is no app-level auth** (password/session login was removed); access control is loopback-only binding + tailscale serve (tailnet only). `mountBasePath` mounts everything under `-base-path`; anything outside the prefix is 404. `NewWithEngine` injects a stub `xengine.Engine` for tests/smoke (via the package-level `engineOverride`, restored after construction).
-- `api` — REST handlers (`/api/*`), SSE (`/api/events`), error→HTTP mapping in `errors.go`.
-- `xengine` — **the only package allowed to import `github.com/qjfoidnh/*`** (isolates upstream upgrades). Upstream `internal/pcsconfig` is not importable, so multi-account credentials (`accounts.json`), the `BaiduPCS` instance pool and the config whitelist are reimplemented here. Share-transfer is an 8-step orchestration copied 1:1 from upstream `RunShareTransfer`.
-- `xfer` — transfer manager: upload queue (`max_upload_load`), download semaphore (`max_download_load`), state machine, SSE event bus (publish snapshots, 500ms throttle). Downloads are a **server-side streaming proxy** (not written to disk; Range pass-through, 3 Range retries on broken streams) because Baidu dlinks require the `NetdiskUA` User-Agent. The dlink resolver is a function field (`ProxyConfig.Resolve`) injected, not a method override.
-- `uploader` / `tempmgr` — chunked (8MB) upload receive to a temp dir, rapid-upload (秒传) first, 2GB disk watermark, temp file deleted ≤10s after terminal state, orphan sweep.
-- `sharetmp` — FR-40 share-link direct download: temp transfer into the user's drive, stream, delete temp dir after terminal state.
-- `session` — only HMAC download-link signing (`SignToken`/`VerifyToken`, key = `config.SessionKey`). `config` / `taskdb` — `config.json`/`accounts.json`/`tasks.json` (JSON files, 0600, mutex-serialized); only terminal task states are persisted.
-- `webui` — embeds `dist/` (`index.html`, `app.js`, `style.css`, and a self-written `pv.js` petite-vue replacement); non-`/assets/` paths fall back to `index.html` (hash routing). The handler injects `<base href="{base-path}/">`, so frontend code must use **relative** URLs (`api/...`, `assets/...`, never a leading `/`); signed URLs returned by the server (`/api/dl?...`) get their leading `/` stripped in `app.js`.
+Under `source/internal/`:
+- `cmd/baidupcs-web/main.go` — flags/env + `account` subcommand (`account.go`, a thin HTTP client of `/api/accounts*`; doesn't touch `accounts.json` itself).
+- `server` — stdlib `ServeMux`; only three route groups: `/api/health`, `/api/accounts*`, `/dav/`. Middleware: recover → redacted leveled logging. `NewWithEngine` injects a stub `xengine.Engine` for tests/smoke (package-level `engineOverride`, restored after construction).
+- `davfs` — WebDAV. `FS` implements `webdav.FileSystem` over `xengine.Engine` for PROPFIND/MKCOL/DELETE/MOVE (10s dir + meta cache, `fileInfo` implements `ContentTyper`/`ETager` so x/net/webdav never opens files to sniff types). `handler.go` intercepts GET/HEAD (stream via `xfer.Proxy.ServeDownloadTrusted`, no signature), PUT (body → `tempmgr` file → `xfer.Manager.EnqueueUploadWithRename` → waits for terminal state so errors reach the client; policy always `overwrite`), COPY (`Engine.Copy`, same-name only → else 501).
+- `xengine` — **the only package allowed to import `github.com/qjfoidnh/*`**. Reimplements multi-account credentials (`accounts.json`) and the `BaiduPCS` instance pool (upstream `internal/pcsconfig` isn't importable). The `Engine` interface still contains share/offline/recycle/transfer methods though no route uses them now (kept for future re-exposure).
+- `xfer` — upload queue (`max_upload_load`), download semaphore (`max_download_load`), streaming proxy (not written to disk; Range pass-through, 3 Range retries on broken streams; Baidu dlinks require the `NetdiskUA` User-Agent). `ServeDownload` verifies an HMAC token, `ServeDownloadTrusted` skips it (WebDAV only). dlink resolver is an injected function field (`ProxyConfig.Resolve`).
+- `tempmgr` — upload temp files: 2GB disk watermark, deleted ≤10s after the task's terminal state, orphan sweep.
+- `session` — only HMAC signing of download tokens (`SignToken`/`VerifyToken`, key = `config.SessionKey`). `config` / `taskdb` — JSON files (0600, mutex-serialized).
 
 ## Conventions and gotchas
 
-- Interface-first design: package-level interfaces (`xengine.Engine`, `xfer.Manager`, …) are the contract; implementations live in `*_impl.go`. Don't change interface signatures casually, and don't import upstream outside `xengine`.
-- Error semantics: "no Baidu account linked" (engine `ErrAuth`) is `409 BAIDU_NOT_LINKED`; the frontend only shows the message and stays on the page.
-- Config whitelist: risk-sensitive upstream fields (`appid`, `pcs_ua`, `pan_ua`, `pcs_addr`, proxy…) are read-only; writes return 403.
-- Tests use stub engines/pcs injected into the pool (do not rely on struct-embedding method overrides — inner receivers ignore outer overrides). Stub Baidu responses must include both `errno` and `error_code`. Tests that hit the network must tighten client timeouts (upstream default is 50s).
+- Interface-first design: package-level interfaces are the contract; implementations in `*_impl.go`. Don't import upstream outside `xengine`.
+- Error semantics: engine `ErrAuth` ("no Baidu account linked") → `409 BAIDU_NOT_LINKED` on `/api/*`, 409 on WebDAV.
+- Tests use stubs injected through config/struct fields, never struct-embedding method overrides (inner receivers ignore outer overrides). Stub Baidu responses must include both `errno` and `error_code`. Tests that hit the network must tighten client timeouts (upstream default is 50s).
 - IPv6: `xengine.applyV4FirstDial` pre-binds v4 via the upstream hook `requester.SetTCPHostBind` when v6 to Baidu is unreachable (or `BPW_FORCE_V4=1`). Prefer upstream's exported hooks over overriding the client transport.
-- Old `docs/` and README/DEPLOY still describe password login and `0.0.0.0:8080`; the code no longer does that. Planned: run under Docker (publish only to `127.0.0.1`, set `BPW_LISTEN=0.0.0.0:8080` inside the container).
-- Comments and docs are in Chinese and reference FR/NFR/wave IDs; match that style.
+- Comments are mostly Chinese and reference FR/NFR/wave IDs from `docs/`; match that style.
+- Git: one commit per phase/task, stage only task files (no `git add -A`); push only when the user authorizes. Planned: Docker packaging (publish only to `127.0.0.1` / container network, `BPW_LISTEN=0.0.0.0:8080` inside the container).

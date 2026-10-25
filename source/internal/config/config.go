@@ -6,10 +6,9 @@ import "os"
 
 // Options 命令行/环境变量注入的启动选项。
 type Options struct {
-	Listen   string // HTTP 监听地址, 默认 0.0.0.0:8080
-	DataDir  string // 数据目录; 空则取 ~/.local/share/baidupcs-web
-	TmpDir   string // 上传临时目录(D4); 空则取 ~/.cache/baidupcs-web/tmp
-	BasePath string // URL 路径前缀(如 /baidu), 空=挂在根路径; 运行期参数, 不落盘
+	Listen  string // HTTP 监听地址, 默认 127.0.0.1:8080
+	DataDir string // 数据目录; 空则取 ~/.local/share/baidupcs-web
+	TmpDir  string // 上传临时目录(D4); 空则取 ~/.cache/baidupcs-web/tmp
 }
 
 // Config 服务运行时配置(持久化部分 + 运行期派生字段)。
@@ -18,8 +17,6 @@ type Config struct {
 
 	// 下载直链签名密钥, 首次启动随机生成并持久化(重启后已签发的直链在有效期内仍有效)
 	SessionKey []byte `json:"session_key"`
-
-	BasePath string `json:"-"` // URL 路径前缀(规范化后形如 /baidu, 空=根), 来自启动参数
 
 	DataDir string `json:"data_dir"` // 数据目录(凭证/任务库/配置)
 	TmpDir  string `json:"tmp_dir"`  // 上传临时目录(D4 默认 ~/.cache/baidupcs-web/tmp)

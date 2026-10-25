@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# smoke_all.sh — W9 全量回归(需求 §3.12 W6 验收清单/NFR-03/FR-01/06/11/15 冒烟):
-#   1) health                              → HEALTH_OK
-#   2) 无鉴权直接访问受保护 API                → NOAUTH_OK
-#   3) 文件列表/配额(桩直链)                  → FILES_OK / QUOTA_OK
-#   4) 签名下载直链 + Range/206               → DL_OK
-#   5) 三段式上传(init→chunk→complete)        → UPLOAD_OK
-#   5b) WebDAV PROPFIND/Range GET/PUT         → DAV_PROPFIND_OK / DAV_RANGE_OK / DAV_PUT_OK
-#   6) 空载 RSS 采样 ≤100MB(NFR-03)           → RSS_OK (<N> KB)
-#   7) 双平台产物存在性检查(build.sh 产物)    → ARTIFACTS_OK
+# smoke_all.sh — 全量冒烟(桩 Engine + 桩下载源, 无网络):
+#   1) health                                     → HEALTH_OK
+#   2) 账号子命令 + 旧页面/旧接口已移除             → ACCOUNT_CLI_OK / REMOVED_SURFACES_OK
+#   3) WebDAV PROPFIND/HEAD/Range GET/PUT/MKCOL/COPY → DAV_*_OK
+#   4) 空载 RSS 采样 ≤100MB(NFR-03)                → RSS_OK (<N> KB)
+#   5) 双平台产物存在性检查(build.sh 产物)          → ARTIFACTS_OK
 # 全部通过输出 SMOKE_ALL_OK, 退出码 0。
 set -u
 
@@ -78,65 +75,38 @@ else
   echo "FAIL: health 异常: $H"; FAIL=1
 fi
 
-# ---------- 4. 无鉴权(口令登录已移除) ----------
-CJ="$WORK/cookies.txt"; : >"$CJ"
-code=$(curl -s -o /dev/null -w '%{http_code}' "http://$LISTEN/api/quota")
-if [[ "$code" == "200" ]]; then
-  echo "NOAUTH_OK"
+# ---------- 4. 无鉴权 + 账号子命令(服务没有 Web 页面, 账号经命令行管理) ----------
+$GO build -o "$WORK/bpw" "$ROOT/cmd/baidupcs-web" || exit 1
+A=$("$WORK/bpw" account list -addr "$LISTEN" 2>&1)
+if echo "$A" | grep -q 'smoke-w9'; then
+  echo "ACCOUNT_CLI_OK"
 else
-  echo "FAIL: 无鉴权访问 /api/quota 应 200, got $code"; FAIL=1
+  echo "FAIL: account list 异常: $A"; FAIL=1
+fi
+# 已删除的页面/旧接口不应再存在
+bad=""
+for p in / /assets/app.js /api/files /api/quota /api/login /api/upload/init /api/events; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://$LISTEN$p")
+  [[ "$code" == "404" || "$code" == "405" ]] || bad="$bad $p=$code"
+done
+if [[ -z "$bad" ]]; then
+  echo "REMOVED_SURFACES_OK"
+else
+  echo "FAIL: 旧入口仍可访问:$bad"; FAIL=1
 fi
 
-# ---------- 5. 文件列表 + 配额(FR-05/06) ----------
-F=$(curl -s -b "$CJ" "http://$LISTEN/api/files?dir=/")
-if echo "$F" | grep -q '冒烟文件.bin'; then
-  echo "FILES_OK"
-else
-  echo "FAIL: 文件列表异常: $F"; FAIL=1
-fi
-Q=$(curl -s -b "$CJ" "http://$LISTEN/api/quota")
-if echo "$Q" | grep -q '"quota"'; then
-  echo "QUOTA_OK"
-else
-  echo "FAIL: 配额异常: $Q"; FAIL=1
-fi
-
-# ---------- 6. 签名直链下载 + Range/206(FR-11/12/39②) ----------
-DLURL=$(curl -s -b "$CJ" "http://$LISTEN/api/dl/url?path=%2F%E5%86%92%E7%83%9F%E6%96%87%E4%BB%B6.bin")
-URL=$(echo "$DLURL" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p' | sed 's/\\u0026/\&/g')
-case "$URL" in /*) URL="http://$LISTEN$URL" ;; esac
-code=$(curl -s -b "$CJ" -o /dev/null -w '%{http_code}' -H "Range: bytes=0-1023" "$URL")
-if [[ "$code" == "206" || "$code" == "200" ]]; then
-  echo "DL_OK (range=$code)"
-else
-  echo "FAIL: 下载应 206/200, got $code (url=$URL)"; FAIL=1
-fi
-
-# ---------- 7. 三段式上传(FR-15) ----------
-INIT=$(curl -s -b "$CJ" -H 'Content-Type: application/json' \
-  -d '{"filename":"w9smoke.bin","size":16,"policy":"overwrite"}' "http://$LISTEN/api/upload/init")
-TASKID=$(echo "$INIT" | sed -n 's/.*"task_id":"\([^"]*\)".*/\1/p')
-if [[ -z "$TASKID" ]]; then
-  echo "FAIL: upload/init 异常: $INIT"; FAIL=1
-else
-  head -c 16 /dev/zero > "$WORK/chunk.bin"
-  CH=$(curl -s -b "$CJ" -o /dev/null -w '%{http_code}' -X POST \
-    -F "file=@$WORK/chunk.bin" "http://$LISTEN/api/upload/$TASKID?seq=0")
-  CM=$(curl -s -b "$CJ" -o /dev/null -w '%{http_code}' -X POST \
-    "http://$LISTEN/api/upload/$TASKID/complete")
-  if [[ "$CH" == "200" ]] && [[ "$CM" == "200" ]]; then
-    echo "UPLOAD_OK"
-  else
-    echo "FAIL: 上传链异常 chunk=$CH complete=$CM"; FAIL=1
-  fi
-fi
-
-# ---------- 7b. WebDAV(OpenList 挂载入口): PROPFIND / Range GET / PUT ----------
+# ---------- 5. WebDAV(OpenList 挂载入口): PROPFIND / HEAD / Range GET / PUT / MKCOL / COPY ----------
 P=$(curl -s -X PROPFIND -H 'Depth: 1' "http://$LISTEN/dav/")
 if echo "$P" | grep -q '冒烟文件.bin' && echo "$P" | grep -q 'collection'; then
   echo "DAV_PROPFIND_OK"
 else
   echo "FAIL: PROPFIND 异常: $P"; FAIL=1
+fi
+HL=$(curl -s -I "http://$LISTEN/dav/%E5%86%92%E7%83%9F%E6%96%87%E4%BB%B6.bin" | tr -d '\r')
+if echo "$HL" | grep -qi '^content-length: 65536' && echo "$HL" | grep -qi '^accept-ranges: bytes'; then
+  echo "DAV_HEAD_OK"
+else
+  echo "FAIL: DAV HEAD 异常: $HL"; FAIL=1
 fi
 code=$(curl -s -o "$WORK/dav_range.bin" -w '%{http_code}' -H "Range: bytes=0-99" \
   "http://$LISTEN/dav/%E5%86%92%E7%83%9F%E6%96%87%E4%BB%B6.bin")
@@ -150,6 +120,20 @@ if [[ "$code" == "201" || "$code" == "204" ]]; then
   echo "DAV_PUT_OK ($code)"
 else
   echo "FAIL: DAV PUT 应 201/204, got $code"; FAIL=1
+fi
+code=$(curl -s -o /dev/null -w '%{http_code}' -X MKCOL "http://$LISTEN/dav/%E6%96%B0%E7%9B%AE%E5%BD%95")
+if [[ "$code" == "201" ]]; then
+  echo "DAV_MKCOL_OK ($code)"
+else
+  echo "FAIL: DAV MKCOL 应 201, got $code"; FAIL=1
+fi
+code=$(curl -s -o /dev/null -w '%{http_code}' -X COPY \
+  -H "Destination: http://$LISTEN/dav/%E7%85%A7%E7%89%87/%E5%86%92%E7%83%9F%E6%96%87%E4%BB%B6.bin" \
+  "http://$LISTEN/dav/%E5%86%92%E7%83%9F%E6%96%87%E4%BB%B6.bin")
+if [[ "$code" == "201" || "$code" == "204" ]]; then
+  echo "DAV_COPY_OK ($code)"
+else
+  echo "FAIL: DAV COPY 应 201/204, got $code"; FAIL=1
 fi
 
 # ---------- 8. 空载 RSS 采样 ≤100MB(NFR-03) ----------
