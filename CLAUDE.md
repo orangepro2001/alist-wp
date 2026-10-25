@@ -27,7 +27,7 @@ All services are reachable **only** through the tailscale https domain, via `tai
 
 ## Deployment on this machine
 
-OpenList runs as Docker container `openlist` (image pinned by digest, `--network host`, bound to `127.0.0.1:5244`, `site_url` `…/files`, data in `~/.local/share/openlist`, admin credentials in `~/.local/share/openlist/admin-credentials.txt` mode 0600) with a WebDAV storage `/百度网盘` → `http://127.0.0.1:8080/dav` (username `baidu`; the **password field holds the Baidu Cookie** — that is the "enter your cookie" entry; admin login `admin`/`512557` at `/files/@login`, guest is enabled with full file permissions so browsing needs no login). `tailscale serve` has `/files → 127.0.0.1:5244/files`; the old `/baidu` path was retired. See `DEPLOY.md`.
+OpenList runs as Docker container `openlist` (image pinned by digest, `--network host`, bound to `127.0.0.1:5244`, `site_url` `…/files`, data in `~/.local/share/openlist`, admin credentials in `~/.local/share/openlist/admin-credentials.txt` mode 0600) with a WebDAV storage `/百度网盘` → `http://127.0.0.1:8080/dav` (username `baidu`; the **password field holds the Baidu Cookie** — that is the "enter your cookie" entry, and `deploy/openlist/bind-baidu.js` (installed into OpenList's `customize_body` by `deploy/openlist/install.sh`) adds a bottom-left "绑定百度账号" dialog that writes the password via OpenList's admin API; a cookie without BDUSS is rejected because BDUSS is HttpOnly and `document.cookie` copies omit it; admin login `admin`/`512557` at `/files/@login`, guest is enabled with full file permissions so browsing needs no login). `tailscale serve` has `/files → 127.0.0.1:5244/files`; the old `/baidu` path was retired. See `DEPLOY.md`.
 
 ## Architecture
 

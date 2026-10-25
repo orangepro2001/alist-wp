@@ -30,9 +30,14 @@ bin/baidupcs-web-linux-amd64       # 正式运行, 默认 -listen 127.0.0.1:8080
 `-log-level`(`BPW_LOG_LEVEL`)、`-version`。端口被占会报错退出, 不静默换端口。
 `BPW_FORCE_V4=1` 强制 IPv4 直连(启动时已会自动探测 IPv6 不通并回落)。
 
-## 绑定百度账号(在 OpenList 里填 Cookie)
+## 绑定百度账号(OpenList 页面左下角"绑定百度账号"按钮)
 
-WebDAV 要求 HTTP Basic 认证: **用户名随意(当标签), 密码 = 百度整串 Cookie**。OpenList 里每个 WebDAV 存储就是一个百度账号,
+`deploy/openlist/bind-baidu.js` 通过 OpenList 的 `customize_body` 设置注入到每个 OpenList 页面(`bash deploy/openlist/install.sh` 安装, 可重复执行):
+左下角出现"绑定百度账号"按钮, 点开弹窗填整串 Cookie 或 BDUSS+STOKEN, 选择更新已有的百度存储或新增一个账号(新建挂载点), 点"绑定"后立刻列一次根目录验证。
+弹窗用 OpenList 自己的管理 API 把 Cookie 写进存储的"密码"栏, 全程同源, 不需要额外路径/端口; 不是管理员登录状态时弹窗会要 admin 密码。
+**BDUSS 是 HttpOnly, 控制台 `document.cookie` 复制不到, 缺它一定失败**: 从 Application→Cookies 手动复制 BDUSS/STOKEN, 或从 Network 请求头复制整行 `Cookie:`。
+
+底层机制: WebDAV 要求 HTTP Basic 认证: **用户名随意(当标签), 密码 = 百度整串 Cookie**。OpenList 里每个 WebDAV 存储就是一个百度账号,
 所以"填 Cookie 的入口"就是 OpenList 的存储编辑页: 管理 → 存储 → `百度网盘` → 编辑 → **密码**栏粘贴 Cookie → 保存。
 想接第二个百度账号, 再添加一个 WebDAV 存储(地址相同, 密码填另一份 Cookie)。服务端按 Cookie 里的 BDUSS 自动登记账号(存 `accounts.json`, 0600), 无需先在服务端注册。
 

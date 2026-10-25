@@ -3,6 +3,7 @@ package xengine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,16 @@ func TestEnsureAccountDoesNotSwitchActive(t *testing.T) {
 	}
 	if _, err := e.EnsureAccount("   "); err == nil {
 		t.Error("空 Cookie 应报错")
+	}
+	// 没有 BDUSS(HttpOnly 复制不到)的 Cookie 不得登记成账号
+	before := len(e.Accounts())
+	_, err = e.EnsureAccount("BAIDUID=x; csrfToken=y; BDUSS=; BDUSS_BFESS=z")
+	var xe *Error
+	if !errors.As(err, &xe) || xe.Code != ErrAuth || !strings.Contains(xe.Message, "BDUSS") {
+		t.Errorf("缺 BDUSS 应 ErrAuth 并提示, got %v", err)
+	}
+	if len(e.Accounts()) != before {
+		t.Error("缺 BDUSS 的 Cookie 不应被登记")
 	}
 	// 已持久化: 重新加载 store 能看到该账号
 	again, err := loadAccountStore(dir)

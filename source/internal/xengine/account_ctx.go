@@ -46,6 +46,11 @@ func (e *pcsEngine) EnsureAccount(cookie string) (uint64, error) {
 	if cookie == "" {
 		return 0, &Error{Code: ErrAuth, Message: "Cookie 不能为空"}
 	}
+	if !hasBDUSS(cookie) {
+		// BDUSS 是 HttpOnly: document.cookie/部分复制方式拿不到。没有它百度一律判登录失效,
+		// 不要把这种 Cookie 登记成账号, 直接给出可操作的提示。
+		return 0, &Error{Code: ErrAuth, Message: "Cookie 里没有 BDUSS(它是 HttpOnly, 不能用 document.cookie 复制): 请在 F12→Application→Cookies 手动复制 BDUSS 与 STOKEN, 或从 Network 请求头复制完整的 Cookie:"}
+	}
 	uid, name := deriveUIDFromCookie(cookie)
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -61,6 +66,17 @@ func (e *pcsEngine) EnsureAccount(cookie string) (uint64, error) {
 	}
 	delete(e.pool, uid)
 	return uid, nil
+}
+
+// hasBDUSS 整串 Cookie 里是否有非空的 BDUSS 项。
+func hasBDUSS(cookie string) bool {
+	for _, kv := range strings.Split(cookie, ";") {
+		kv = strings.TrimSpace(kv)
+		if len(kv) > len("bduss=") && strings.EqualFold(kv[:len("bduss=")], "bduss=") {
+			return true
+		}
+	}
+	return false
 }
 
 // activeFor 取本次请求应使用的 pcs 实例: ctx 指定了账号就用它, 否则用活跃账号。

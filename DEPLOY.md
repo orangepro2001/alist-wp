@@ -35,6 +35,7 @@ docker run -d --name openlist --restart unless-stopped --network host --user "$(
 
 登录 `https://<本机>.ts.net/files` → 管理 → 存储 → 添加 **WebDAV**: 地址 `http://127.0.0.1:8080/dav`,
 用户名随意(如 `baidu`), **密码栏填百度整串 Cookie**(每个存储一个账号), 挂载路径如 `/百度网盘`, WebDAV 策略**本地代理**(`native_proxy`, 默认)。
+"绑定百度账号"弹窗入口: `bash deploy/openlist/install.sh`(把 `bind-baidu.js` 写进 OpenList 的 `customize_body`, 需要 admin 密码, 取自 `~/.local/share/openlist/admin-credentials.txt` 或环境变量 `OPENLIST_ADMIN_PASSWORD`)。
 以后加 Google Drive: 直接添加 GoogleDrive 存储即可。
 
 ## 3. 暴露到 tailnet
