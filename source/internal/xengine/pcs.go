@@ -395,7 +395,7 @@ func (e *pcsEngine) RemoveAccount(uid uint64) error {
 // ---------------------------------------------------------------------------
 
 func (e *pcsEngine) Quota(ctx context.Context) (quota, used int64, err error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -421,7 +421,7 @@ func (e *pcsEngine) Quota(ctx context.Context) (quota, used int64, err error) {
 // ---------------------------------------------------------------------------
 
 func (e *pcsEngine) List(ctx context.Context, dir string, page, pageSize int, orderBy, order string) (FileDirectoryList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +487,7 @@ func mirrorFD(fd *baidupcs.FileDirectory) *FileDirectory {
 }
 
 func (e *pcsEngine) Meta(ctx context.Context, p string) (*FileDirectory, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +499,7 @@ func (e *pcsEngine) Meta(ctx context.Context, p string) (*FileDirectory, error) 
 }
 
 func (e *pcsEngine) Search(ctx context.Context, dir, keyword string, recursive bool) (FileDirectoryList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +515,7 @@ func (e *pcsEngine) Search(ctx context.Context, dir, keyword string, recursive b
 }
 
 func (e *pcsEngine) Mkdir(ctx context.Context, p string) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -523,7 +523,7 @@ func (e *pcsEngine) Mkdir(ctx context.Context, p string) error {
 }
 
 func (e *pcsEngine) Remove(ctx context.Context, paths []string) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -531,7 +531,7 @@ func (e *pcsEngine) Remove(ctx context.Context, paths []string) error {
 }
 
 func (e *pcsEngine) Copy(ctx context.Context, from []string, toDir string) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -543,7 +543,7 @@ func (e *pcsEngine) Copy(ctx context.Context, from []string, toDir string) error
 }
 
 func (e *pcsEngine) Move(ctx context.Context, from []string, toDir string) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -555,7 +555,7 @@ func (e *pcsEngine) Move(ctx context.Context, from []string, toDir string) error
 }
 
 func (e *pcsEngine) Rename(ctx context.Context, from, to string) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -563,7 +563,7 @@ func (e *pcsEngine) Rename(ctx context.Context, from, to string) error {
 }
 
 func (e *pcsEngine) Tree(ctx context.Context, dir string, maxDepth int) (FileDirectoryList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +585,7 @@ func (e *pcsEngine) Tree(ctx context.Context, dir string, maxDepth int) (FileDir
 }
 
 func (e *pcsEngine) Match(ctx context.Context, pattern string) ([]string, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -601,7 +601,7 @@ func (e *pcsEngine) Match(ctx context.Context, pattern string) ([]string, error)
 // ---------------------------------------------------------------------------
 
 func (e *pcsEngine) ResolveDlink(ctx context.Context, pcspath string) (*DownloadLink, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -626,7 +626,7 @@ func (e *pcsEngine) ResolveDlink(ctx context.Context, pcspath string) (*Download
 }
 
 func (e *pcsEngine) Export(ctx context.Context, pcspath string) (*RapidLink, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +656,7 @@ func (e *pcsEngine) Export(ctx context.Context, pcspath string) (*RapidLink, err
 // ---------------------------------------------------------------------------
 
 func (e *pcsEngine) ShareSet(ctx context.Context, paths []string, password string, period int) (*Shared, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +668,7 @@ func (e *pcsEngine) ShareSet(ctx context.Context, paths []string, password strin
 }
 
 func (e *pcsEngine) ShareList(ctx context.Context, page int) (ShareRecordList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +692,7 @@ func (e *pcsEngine) ShareList(ctx context.Context, page int) (ShareRecordList, e
 }
 
 func (e *pcsEngine) ShareCancel(ctx context.Context, shareIDs []int64) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -849,7 +849,7 @@ func (e *pcsEngine) shareListMetas(pcs *baidupcs.BaiduPCS, tokens map[string]str
 // 取 server_filename。大小: 上游分享域接口均不回文件大小, Size 恒 0 + SizeKnown=false
 // (配额预检按 0 保守计, 如实注明不伪造, FR-40/B4)。
 func (e *pcsEngine) SharePreview(ctx context.Context, link, passcode string) (SharePreviewResult, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return SharePreviewResult{}, err
 	}
@@ -993,7 +993,7 @@ func (e *pcsEngine) OfflineAdd(ctx context.Context, sourceURLs []string, savePat
 	errs := make([]error, 0, len(sourceURLs))
 	for _, u := range sourceURLs {
 		task, err := func() (OfflineTask, error) {
-			pcs, err := e.active()
+			pcs, err := e.activeFor(ctx)
 			if err != nil {
 				return OfflineTask{}, err
 			}
@@ -1010,7 +1010,7 @@ func (e *pcsEngine) OfflineAdd(ctx context.Context, sourceURLs []string, savePat
 }
 
 func (e *pcsEngine) OfflineList(ctx context.Context) (OfflineTaskList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,7 +1022,7 @@ func (e *pcsEngine) OfflineList(ctx context.Context) (OfflineTaskList, error) {
 }
 
 func (e *pcsEngine) OfflineQuery(ctx context.Context, taskIDs []int64) (OfflineTaskList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1051,7 +1051,7 @@ func mirrorCloudDl(cl baidupcs.CloudDlTaskList) OfflineTaskList {
 }
 
 func (e *pcsEngine) OfflineCancel(ctx context.Context, taskID int64) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -1059,7 +1059,7 @@ func (e *pcsEngine) OfflineCancel(ctx context.Context, taskID int64) error {
 }
 
 func (e *pcsEngine) OfflineDelete(ctx context.Context, taskID int64, all bool) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -1075,7 +1075,7 @@ func (e *pcsEngine) OfflineDelete(ctx context.Context, taskID int64, all bool) e
 // ---------------------------------------------------------------------------
 
 func (e *pcsEngine) RecycleList(ctx context.Context, page int) (RecycleInfoList, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1099,7 +1099,7 @@ func (e *pcsEngine) RecycleList(ctx context.Context, page int) (RecycleInfoList,
 }
 
 func (e *pcsEngine) RecycleRestore(ctx context.Context, fsids []int64) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}
@@ -1108,7 +1108,7 @@ func (e *pcsEngine) RecycleRestore(ctx context.Context, fsids []int64) error {
 }
 
 func (e *pcsEngine) RecycleDelete(ctx context.Context, fsids []int64, all bool) error {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,7 @@ OpenList 负责统一的网页前端(以后还能并排挂 Google Drive 等), �
 浏览器 → tailscale serve https://<本机>.ts.net/files → OpenList(127.0.0.1:5244)
 OpenList 存储: [WebDAV 驱动·本地代理] → http://127.0.0.1:8080/dav   ← 本服务(仅回环)
                [GoogleDrive 驱动]     → OpenList 原生(以后)
-账号管理:      baidupcs-web account ...   (命令行, 本机)
+账号凭证:      OpenList 存储编辑页的"密码"栏 = 百度 Cookie
 ```
 
 **对外入口只有 tailscale 的 `/files`**。本服务只监听回环地址、没有应用层鉴权也没有 Web 页面, 访问控制完全交给 tailnet。
@@ -30,19 +30,18 @@ bin/baidupcs-web-linux-amd64       # 正式运行, 默认 -listen 127.0.0.1:8080
 `-log-level`(`BPW_LOG_LEVEL`)、`-version`。端口被占会报错退出, 不静默换端口。
 `BPW_FORCE_V4=1` 强制 IPv4 直连(启动时已会自动探测 IPv6 不通并回落)。
 
-## 绑定百度账号(命令行)
+## 绑定百度账号(在 OpenList 里填 Cookie)
 
-先启动服务, 再在本机执行(Cookie 走 stdin, 不进进程列表):
-
-```bash
-baidupcs-web account add -cookie - < cookie.txt      # 整串 Cookie(推荐)
-baidupcs-web account add -bduss BDUSS -stoken STOKEN # STOKEN 取 pan.baidu.com 域
-baidupcs-web account list | switch <uid> | rm <uid>
-```
+WebDAV 要求 HTTP Basic 认证: **用户名随意(当标签), 密码 = 百度整串 Cookie**。OpenList 里每个 WebDAV 存储就是一个百度账号,
+所以"填 Cookie 的入口"就是 OpenList 的存储编辑页: 管理 → 存储 → `百度网盘` → 编辑 → **密码**栏粘贴 Cookie → 保存。
+想接第二个百度账号, 再添加一个 WebDAV 存储(地址相同, 密码填另一份 Cookie)。服务端按 Cookie 里的 BDUSS 自动登记账号(存 `accounts.json`, 0600), 无需先在服务端注册。
 
 获取 Cookie: 电脑 Chrome/Edge 登录 [pan.baidu.com](https://pan.baidu.com) → `F12` → Application → Cookies → `https://pan.baidu.com`
-复制整串, 或在 Network 里任一 `pan.baidu.com` 请求头复制 `Cookie:`。凭证只存服务器 `accounts.json`(0600), 接口/日志均脱敏。
-WebDAV 只暴露当前活跃账号。绑定成功但报"登录凭证已失效" = 复制不完整或已过期, 重新复制。
+复制整串, 或在 Network 里任一 `pan.baidu.com` 请求头复制 `Cookie:`。接口/日志均不输出凭证。
+列目录报"登录凭证已失效" = Cookie 复制不完整或已过期, 重新复制并保存即可; 密码栏为空则 401。
+
+命令行(可选, 仅用于查看/清理 `accounts.json` 里的账号, 与 WebDAV 选哪个账号无关):
+`baidupcs-web account list | add -cookie - | rm <uid>`(`switch` 只影响没有 Basic 认证的路径, 即测试桩)。
 
 ## WebDAV 行为
 

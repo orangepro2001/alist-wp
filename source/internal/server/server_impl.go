@@ -131,8 +131,12 @@ func newServer(opt Options) (*Server, error) {
 
 	// WebDAV: 下载走流式代理(免签名, 仅回环可达), 上传落 tempmgr 临时文件后入同一上传队列
 	// (秒传优先)。PUT 同名一律覆盖(WebDAV 语义)。
+	// 真实引擎实现 AccountResolver: /dav 要求 Basic 认证, 密码栏 = 百度 Cookie(每个 OpenList
+	// 存储一个账号); 桩引擎没有该能力则不认证。
+	resolver, _ := eng.(xengine.AccountResolver)
 	mux.Handle("/dav/", davfs.New(davfs.Config{
 		Engine:   eng,
+		Auth:     resolver,
 		Uploads:  xf,
 		Temp:     tm,
 		Download: xf.Proxy(),

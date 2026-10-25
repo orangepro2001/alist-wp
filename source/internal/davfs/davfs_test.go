@@ -31,8 +31,9 @@ type memEntry struct {
 type memEngine struct {
 	mu      sync.Mutex
 	files   map[string]*memEntry
-	metas   int   // Meta 调用次数(验证缓存)
-	listErr error // 非 nil 时 List 返回该错误
+	metas   int      // Meta 调用次数(验证缓存)
+	listErr error    // 非 nil 时 List 返回该错误
+	listUID []uint64 // 每次 List 调用时 ctx 里的账号 uid(验证请求级账号选择)
 }
 
 func newMemEngine() *memEngine {
@@ -63,9 +64,11 @@ func (m *memEngine) Meta(_ context.Context, p string) (*xengine.FileDirectory, e
 	return fdOf(p, e), nil
 }
 
-func (m *memEngine) List(_ context.Context, dir string, _, _ int, _, _ string) (xengine.FileDirectoryList, error) {
+func (m *memEngine) List(ctx context.Context, dir string, _, _ int, _, _ string) (xengine.FileDirectoryList, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	uid, _ := xengine.AccountFrom(ctx)
+	m.listUID = append(m.listUID, uid)
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -159,13 +162,15 @@ type memUploader struct {
 	failWith string
 	policy   string
 	renamed  bool
+	uid      uint64 // 入队时 ctx 里的账号 uid
 }
 
-func (u *memUploader) EnqueueUploadWithRename(_ context.Context, tempPath, savePath, policy string, _ bool, renamer func(string) (string, error)) (string, error) {
+func (u *memUploader) EnqueueUploadWithRename(ctx context.Context, tempPath, savePath, policy string, _ bool, renamer func(string) (string, error)) (string, error) {
 	u.mu.Lock()
 	u.n++
 	id := "t" + string(rune('0'+u.n))
 	u.policy = policy
+	u.uid, _ = xengine.AccountFrom(ctx)
 	u.mu.Unlock()
 	final := tempPath
 	if np, err := renamer(id); err == nil {
@@ -462,5 +467,85 @@ func TestPropfindRejectsInfiniteDepth(t *testing.T) {
 		if code != 403 || !strings.Contains(body, "propfind-finite-depth") {
 			t.Errorf("hdr=%v: 应 403 finite-depth, got %d %q", hdr, code, body)
 		}
+	}
+}
+
+// memResolver 把 Cookie 映射成账号 uid: "cookieA"→1, "cookieB"→2, 其余报错。
+type memResolver struct{}
+
+func (memResolver) EnsureAccount(cookie string) (uint64, error) {
+	switch cookie {
+	case "cookieA":
+		return 1, nil
+	case "cookieB":
+		return 2, nil
+	}
+	return 0, &xengine.Error{Code: xengine.ErrAuth, Message: "bad cookie"}
+}
+
+func newAuthEnv(t *testing.T) *env {
+	t.Helper()
+	tm, err := tempmgr.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := newMemEngine()
+	up := &memUploader{eng: eng, rows: map[string]xfer.TaskRow{}}
+	h := New(Config{Engine: eng, Auth: memResolver{}, Uploads: up, Temp: tm, Download: memDownloader{eng}, Prefix: "/dav", Poll: 5 * time.Millisecond})
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return &env{srv: srv, eng: eng, up: up}
+}
+
+func basic(cookie string) map[string]string {
+	req, _ := http.NewRequest("GET", "/", nil)
+	req.SetBasicAuth("baidu", cookie)
+	return map[string]string{"Authorization": req.Header.Get("Authorization"), "Depth": "1"}
+}
+
+// 配了 Auth 时: 没有/空密码 → 401 + Basic 质询(OpenList 的 WebDAV 客户端据此带上凭证)。
+func TestAuthRequiredWhenResolverConfigured(t *testing.T) {
+	e := newAuthEnv(t)
+	code, body, h := e.do(t, "PROPFIND", "/dav/", "", map[string]string{"Depth": "1"})
+	if code != 401 || !strings.HasPrefix(h.Get("WWW-Authenticate"), "Basic") || !strings.Contains(body, "Cookie") {
+		t.Fatalf("无凭证应 401 + Basic 质询, got %d %v %q", code, h, body)
+	}
+	if code, _, _ := e.do(t, "PROPFIND", "/dav/", "", basic("")); code != 401 {
+		t.Errorf("空密码应 401, got %d", code)
+	}
+	if code, _, _ := e.do(t, "PROPFIND", "/dav/", "", basic("wrong")); code != 409 {
+		t.Errorf("无法解析的 Cookie 应 409, got %d", code)
+	}
+	for _, m := range []string{"GET", "PUT", "MKCOL", "DELETE"} {
+		if code, _, _ := e.do(t, m, "/dav/docs/a.txt", "x", nil); code != 401 {
+			t.Errorf("%s 无凭证应 401, got %d", m, code)
+		}
+	}
+}
+
+// 账号经 ctx 传给引擎; 不同账号的目录缓存互不串。
+func TestAuthSelectsAccountAndIsolatesCache(t *testing.T) {
+	e := newAuthEnv(t)
+	if code, _, _ := e.do(t, "PROPFIND", "/dav/docs/", "", basic("cookieA")); code != 207 {
+		t.Fatalf("A 列目录 = %d", code)
+	}
+	e.do(t, "PROPFIND", "/dav/docs/", "", basic("cookieA")) // 命中 A 的缓存
+	if code, _, _ := e.do(t, "PROPFIND", "/dav/docs/", "", basic("cookieB")); code != 207 {
+		t.Fatalf("B 列目录 = %d", code)
+	}
+	got := e.eng.listUID
+	if len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("List 应各被调用一次且账号依次为 1、2(B 不能吃 A 的缓存), got %v", got)
+	}
+}
+
+// 上传入队时账号随 ctx 一起交给上传队列(后台任务仍用同一账号)。
+func TestAuthCarriesAccountToUpload(t *testing.T) {
+	e := newAuthEnv(t)
+	if code, _, _ := e.do(t, "PUT", "/dav/docs/up.txt", "data", map[string]string{"Authorization": basic("cookieB")["Authorization"]}); code != 201 {
+		t.Fatalf("PUT = %d", code)
+	}
+	if e.up.uid != 2 {
+		t.Errorf("上传应带账号 2, got %d", e.up.uid)
 	}
 }

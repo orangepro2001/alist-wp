@@ -12,7 +12,7 @@ func TestMaskSecret(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", ""},
 		{"abc", "****"},
-		{"12345678901", "****"},            // 11 字符(<12)全掩码
+		{"12345678901", "****"},              // 11 字符(<12)全掩码
 		{"ABCDEFGHIJKLMNOP", "ABCD****MNOP"}, // 16 字符前4后4
 	}
 	for _, c := range cases {

@@ -9,7 +9,6 @@
 cd source && bash scripts/build.sh
 install -m 755 bin/baidupcs-web-linux-amd64 ~/.local/bin/baidupcs-web
 baidupcs-web            # 默认 127.0.0.1:8080; 数据在 ~/.local/share/baidupcs-web
-baidupcs-web account add -cookie - < cookie.txt
 ```
 
 常驻可用 systemd 用户服务(`ExecStart=%h/.local/bin/baidupcs-web`, `Restart=on-failure`), 保持监听回环。
@@ -35,7 +34,7 @@ docker run -d --name openlist --restart unless-stopped --network host --user "$(
 (注意: 不带 `OPENLIST_ADMIN_PASSWORD` 的首次启动在 v4.2.9 里没有创建 admin 用户, 日志报 `failed get admin user`。)
 
 登录 `https://<本机>.ts.net/files` → 管理 → 存储 → 添加 **WebDAV**: 地址 `http://127.0.0.1:8080/dav`,
-无账号密码, 挂载路径如 `/百度网盘`, WebDAV 策略**本地代理**(`native_proxy`, 默认)。
+用户名随意(如 `baidu`), **密码栏填百度整串 Cookie**(每个存储一个账号), 挂载路径如 `/百度网盘`, WebDAV 策略**本地代理**(`native_proxy`, 默认)。
 以后加 Google Drive: 直接添加 GoogleDrive 存储即可。
 
 ## 3. 暴露到 tailnet

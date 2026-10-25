@@ -97,7 +97,7 @@ func dataOffset(contentMD5 string, uk, dataTime, fileSize, subSize int64) (int64
 
 // Upload 上传本地文件到网盘(秒传优先, 失败转分片引擎; §5.2)。
 func (e *pcsEngine) Upload(ctx context.Context, param UploadParam) (UploadResult, error) {
-	pcs, err := e.active()
+	pcs, err := e.activeFor(ctx)
 	if err != nil {
 		return UploadResult{}, err
 	}

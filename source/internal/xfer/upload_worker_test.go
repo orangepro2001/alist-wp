@@ -18,6 +18,7 @@ type stubUploadEngine struct {
 	mu       sync.Mutex
 	params   []paramRec
 	rapidHit bool
+	uids     []uint64 // 每次 Upload 的 ctx 里的账号 uid
 }
 
 type paramRec struct {
@@ -25,8 +26,10 @@ type paramRec struct {
 	noRapid                     bool
 }
 
-func (s *stubUploadEngine) Upload(_ context.Context, p xengine.UploadParam) (xengine.UploadResult, error) {
+func (s *stubUploadEngine) Upload(ctx context.Context, p xengine.UploadParam) (xengine.UploadResult, error) {
 	s.mu.Lock()
+	uid, _ := xengine.AccountFrom(ctx)
+	s.uids = append(s.uids, uid)
 	s.params = append(s.params, paramRec{p.LocalPath, p.SavePath, p.Policy, p.NoRapid})
 	s.mu.Unlock()
 	return xengine.UploadResult{RapidUpload: s.rapidHit, SavePath: p.SavePath}, nil
@@ -163,4 +166,29 @@ func TestUploadRowInTaskList(t *testing.T) {
 	if !ok || row.Kind != "upload" {
 		t.Fatalf("任务行应为 upload: %+v %v", row, ok)
 	}
+}
+
+// TestUploadKeepsAccountFromCaller 后台上传脱离请求 ctx, 仍须用发起请求的百度账号(WebDAV 多账号)。
+func TestUploadKeepsAccountFromCaller(t *testing.T) {
+	eng := &stubUploadEngine{}
+	u, q := newUploadTest(t, UploadConfig{Engine: eng})
+	tmp := filepath.Join(t.TempDir(), "uptask-x-acct.bin")
+	_ = os.WriteFile(tmp, []byte("data"), 0o600)
+	id, err := u.EnqueueUpload(xengine.WithAccount(context.Background(), 42), tmp, "/a.bin", "overwrite", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if row, ok := q.get(id); ok && row.State == "done" {
+			eng.mu.Lock()
+			defer eng.mu.Unlock()
+			if len(eng.uids) != 1 || eng.uids[0] != 42 {
+				t.Fatalf("引擎 Upload 应拿到账号 42, got %v", eng.uids)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("上传任务未在 2s 内完成")
 }

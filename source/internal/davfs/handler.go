@@ -44,7 +44,11 @@ type Downloader interface {
 
 // Config WebDAV 装配参数。
 type Config struct {
-	Engine   Engine
+	Engine Engine
+	// Auth 非 nil 时 /dav 要求 HTTP Basic 认证: 用户名随意(标签), 密码 = 百度整串 Cookie,
+	// 由它解析出账号 uid 放进请求 ctx(每个 OpenList 存储用自己的 Cookie = 一个百度账号)。
+	// nil 则不认证, 走引擎的活跃账号(桩/单账号)。
+	Auth     xengine.AccountResolver
 	Uploads  Uploader
 	Temp     Temp
 	Download Downloader
@@ -89,7 +93,30 @@ func (h *handler) reqPath(r *http.Request) string {
 	return clean(strings.TrimPrefix(r.URL.Path, h.cfg.Prefix))
 }
 
+// authenticate 从 Basic 认证的密码取出百度 Cookie 并选定账号; 失败时已写出 401。
+func (h *handler) authenticate(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	if h.cfg.Auth == nil {
+		return r, true
+	}
+	_, cookie, ok := r.BasicAuth()
+	if !ok || strings.TrimSpace(cookie) == "" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="baidupcs-web (密码栏填百度 Cookie)", charset="UTF-8"`)
+		http.Error(w, "需要百度 Cookie: 在 OpenList 存储的\"密码\"栏填入整串 Cookie", http.StatusUnauthorized)
+		return r, false
+	}
+	uid, err := h.cfg.Auth.EnsureAccount(cookie)
+	if err != nil {
+		h.fail(w, err)
+		return r, false
+	}
+	return r.WithContext(xengine.WithAccount(r.Context(), uid)), true
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.get(w, r)
@@ -226,7 +253,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID, err := h.cfg.Uploads.EnqueueUploadWithRename(context.Background(), tmpPath, p, h.cfg.Policy, false,
+	taskID, err := h.cfg.Uploads.EnqueueUploadWithRename(ctx, tmpPath, p, h.cfg.Policy, false,
 		func(taskID string) (string, error) { return h.cfg.Uploads.RenameTemp(taskID, tmpPath) })
 	if err != nil {
 		_ = h.cfg.Temp.DeleteTaskFile(id)
@@ -235,7 +262,7 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 	}
 	// 排队/上传期间客户端断开则不再等待(任务继续在后台完成, 临时文件由终态钩子清理)。
 	row, err := h.waitTerminal(ctx, taskID)
-	h.fs.invalidate(p)
+	h.fs.invalidate(ctx, p)
 	switch {
 	case err != nil:
 		http.Error(w, "等待上传结果被中断: "+err.Error(), http.StatusGatewayTimeout)
@@ -321,7 +348,7 @@ func (h *handler) copy(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	h.fs.invalidate(dst)
+	h.fs.invalidate(ctx, dst)
 	if existed {
 		w.WriteHeader(http.StatusNoContent)
 	} else {

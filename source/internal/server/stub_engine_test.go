@@ -49,11 +49,11 @@ func trimPrefixSlash(p string) string {
 	return p
 }
 
-func (s *stubFilesEngine) Mkdir(context.Context, string) error            { return errNotImpl }
-func (s *stubFilesEngine) Remove(context.Context, []string) error         { return errNotImpl }
-func (s *stubFilesEngine) Copy(context.Context, []string, string) error   { return errNotImpl }
-func (s *stubFilesEngine) Move(context.Context, []string, string) error   { return errNotImpl }
-func (s *stubFilesEngine) Rename(context.Context, string, string) error   { return errNotImpl }
+func (s *stubFilesEngine) Mkdir(context.Context, string) error          { return errNotImpl }
+func (s *stubFilesEngine) Remove(context.Context, []string) error       { return errNotImpl }
+func (s *stubFilesEngine) Copy(context.Context, []string, string) error { return errNotImpl }
+func (s *stubFilesEngine) Move(context.Context, []string, string) error { return errNotImpl }
+func (s *stubFilesEngine) Rename(context.Context, string, string) error { return errNotImpl }
 func (s *stubFilesEngine) Tree(context.Context, string, int) (xengine.FileDirectoryList, error) {
 	return nil, errNotImpl
 }
@@ -77,8 +77,8 @@ func (s *stubFilesEngine) AddAccountByCookie(string) (*xengine.Account, error) {
 func (s *stubFilesEngine) AddAccountByBDUSS(string, string) (*xengine.Account, error) {
 	return nil, errNotImpl
 }
-func (s *stubFilesEngine) SwitchAccount(uint64) error  { return nil }
-func (s *stubFilesEngine) RemoveAccount(uint64) error  { return nil }
+func (s *stubFilesEngine) SwitchAccount(uint64) error { return nil }
+func (s *stubFilesEngine) RemoveAccount(uint64) error { return nil }
 func (s *stubFilesEngine) ShareSet(context.Context, []string, string, int) (*xengine.Shared, error) {
 	return nil, errNotImpl
 }
@@ -107,7 +107,7 @@ func (s *stubFilesEngine) OfflineList(context.Context) (xengine.OfflineTaskList,
 func (s *stubFilesEngine) OfflineQuery(context.Context, []int64) (xengine.OfflineTaskList, error) {
 	return nil, errNotImpl
 }
-func (s *stubFilesEngine) OfflineCancel(context.Context, int64) error   { return errNotImpl }
+func (s *stubFilesEngine) OfflineCancel(context.Context, int64) error       { return errNotImpl }
 func (s *stubFilesEngine) OfflineDelete(context.Context, int64, bool) error { return errNotImpl }
 func (s *stubFilesEngine) RecycleList(context.Context, int) (xengine.RecycleInfoList, error) {
 	return nil, errNotImpl

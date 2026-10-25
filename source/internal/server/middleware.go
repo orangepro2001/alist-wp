@@ -87,13 +87,13 @@ func LogAt(level, format string, a ...interface{}) {
 
 // sensitiveKeys 日志脱敏敏感键集合(FR-38; 大小写不敏感)。
 var sensitiveKeys = map[string]bool{
-	"bduss":     true,
-	"stoken":    true,
-	"cookie":    true,
-	"passcode":  true,
-	"password":  true,
-	"ptoken":    true,
-	"baiduid":   true,
+	"bduss":      true,
+	"stoken":     true,
+	"cookie":     true,
+	"passcode":   true,
+	"password":   true,
+	"ptoken":     true,
+	"baiduid":    true,
 	"set-cookie": true,
 }
 

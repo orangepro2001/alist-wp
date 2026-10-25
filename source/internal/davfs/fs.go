@@ -107,7 +107,12 @@ type FS struct {
 	ttl time.Duration
 	now func() time.Time
 
-	mu    sync.Mutex
+	mu   sync.Mutex
+	accs map[uint64]*accCache // 按百度账号隔离: 不同账号同一路径内容不同
+}
+
+// accCache 单个账号的目录/单项缓存。
+type accCache struct {
 	cache map[string]*dirCache
 	meta  map[string]*metaEntry // 单项 Meta 缓存(同一请求内 Stat/OpenFile 会重复查同一路径)
 }
@@ -123,7 +128,18 @@ func NewFS(eng Engine, ttl time.Duration) *FS {
 	if ttl <= 0 {
 		ttl = 10 * time.Second
 	}
-	return &FS{eng: eng, ttl: ttl, now: time.Now, cache: map[string]*dirCache{}, meta: map[string]*metaEntry{}}
+	return &FS{eng: eng, ttl: ttl, now: time.Now, accs: map[uint64]*accCache{}}
+}
+
+// acc 取(或建)ctx 所属账号的缓存; 调用方须持 f.mu。ctx 无账号时用 0 号(单账号/桩路径)。
+func (f *FS) acc(ctx context.Context) *accCache {
+	uid, _ := xengine.AccountFrom(ctx)
+	a := f.accs[uid]
+	if a == nil {
+		a = &accCache{cache: map[string]*dirCache{}, meta: map[string]*metaEntry{}}
+		f.accs[uid] = a
+	}
+	return a
 }
 
 func clean(name string) string {
@@ -133,16 +149,17 @@ func clean(name string) string {
 var rootInfo = &fileInfo{name: "/", dir: true, mtime: time.Unix(0, 0)}
 
 // invalidate 丢弃这些路径自身及其父目录的列表缓存。
-func (f *FS) invalidate(paths ...string) {
+func (f *FS) invalidate(ctx context.Context, paths ...string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	a := f.acc(ctx)
 	for _, p := range paths {
 		p = clean(p)
-		delete(f.cache, p)
-		delete(f.cache, path.Dir(p))
-		for k := range f.meta { // 目录被删/移动时, 其下所有单项缓存一并失效
+		delete(a.cache, p)
+		delete(a.cache, path.Dir(p))
+		for k := range a.meta { // 目录被删/移动时, 其下所有单项缓存一并失效
 			if k == p || strings.HasPrefix(k, p+"/") {
-				delete(f.meta, k)
+				delete(a.meta, k)
 			}
 		}
 	}
@@ -151,7 +168,7 @@ func (f *FS) invalidate(paths ...string) {
 // listDir 返回目录内容(带缓存)。
 func (f *FS) listDir(ctx context.Context, dir string) (*dirCache, error) {
 	f.mu.Lock()
-	if c, ok := f.cache[dir]; ok && f.now().Before(c.exp) {
+	if c, ok := f.acc(ctx).cache[dir]; ok && f.now().Before(c.exp) {
 		f.mu.Unlock()
 		return c, nil
 	}
@@ -167,7 +184,7 @@ func (f *FS) listDir(ctx context.Context, dir string) (*dirCache, error) {
 		c.order = append(c.order, in)
 	}
 	f.mu.Lock()
-	f.cache[dir] = c
+	f.acc(ctx).cache[dir] = c
 	f.mu.Unlock()
 	return c, nil
 }
@@ -184,7 +201,7 @@ func (f *FS) stat(ctx context.Context, name string) (*fileInfo, error) {
 	}
 	// 父目录列表已缓存时只信缓存(命中/不存在都不再打百度)。
 	f.mu.Lock()
-	c, ok := f.cache[path.Dir(p)]
+	c, ok := f.acc(ctx).cache[path.Dir(p)]
 	fresh := ok && f.now().Before(c.exp)
 	f.mu.Unlock()
 	if fresh {
@@ -194,7 +211,7 @@ func (f *FS) stat(ctx context.Context, name string) (*fileInfo, error) {
 		return nil, os.ErrNotExist
 	}
 	f.mu.Lock()
-	if m, ok := f.meta[p]; ok && f.now().Before(m.exp) {
+	if m, ok := f.acc(ctx).meta[p]; ok && f.now().Before(m.exp) {
 		f.mu.Unlock()
 		return m.info, nil
 	}
@@ -205,7 +222,7 @@ func (f *FS) stat(ctx context.Context, name string) (*fileInfo, error) {
 	}
 	in := infoFromFD(fd)
 	f.mu.Lock()
-	f.meta[p] = &metaEntry{info: in, exp: f.now().Add(f.ttl)}
+	f.acc(ctx).meta[p] = &metaEntry{info: in, exp: f.now().Add(f.ttl)}
 	f.mu.Unlock()
 	return in, nil
 }
@@ -228,7 +245,7 @@ func (f *FS) Mkdir(ctx context.Context, name string, _ os.FileMode) error {
 	if err := mapErr(f.eng.Mkdir(ctx, p)); err != nil {
 		return err
 	}
-	f.invalidate(p)
+	f.invalidate(ctx, p)
 	return nil
 }
 
@@ -241,7 +258,7 @@ func (f *FS) RemoveAll(ctx context.Context, name string) error {
 	if err := mapErr(f.eng.Remove(ctx, []string{p})); err != nil {
 		return err
 	}
-	f.invalidate(p)
+	f.invalidate(ctx, p)
 	return nil
 }
 
@@ -269,7 +286,7 @@ func (f *FS) Rename(ctx context.Context, oldName, newName string) error {
 			}
 		}
 	}
-	f.invalidate(from, to)
+	f.invalidate(ctx, from, to)
 	return nil
 }
 

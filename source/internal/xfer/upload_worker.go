@@ -96,7 +96,8 @@ func (u *uploadManager) enqueueUpload(ctx context.Context, tempPath, savePath, p
 		}
 		// 改名失败保留原路径(tempmgr 引用仍指向原文件, 删除链路不断)
 	}
-	uctx, cancel := context.WithCancel(context.Background())
+	// 上传脱离请求 ctx 在后台跑, 但仍要用发起请求的那个百度账号(WebDAV 多账号)。
+	uctx, cancel := context.WithCancel(xengine.CarryAccount(ctx, context.Background()))
 	u.mu.Lock()
 	u.cancel[id] = cancel
 	u.mu.Unlock()
