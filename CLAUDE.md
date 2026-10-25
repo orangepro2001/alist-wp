@@ -25,6 +25,10 @@ Scripts hardcode `GO=/usr/local/go/bin/go` in smoke_all.sh (build.sh honours `$G
 
 All services are reachable **only** through the tailscale https domain, via `tailscale serve`; never open extra paths/ports to the network. This server listens on `127.0.0.1:8080` only (plumbing for OpenList) and has **no app-level auth**. Only add `tailscale serve` paths the user asked for; don't touch existing ones (`/`, `/dsh`, `/claude`, `/report`, `:8443`). Account management is CLI-only for this reason.
 
+## Deployment on this machine
+
+OpenList runs as Docker container `openlist` (image pinned by digest, `--network host`, bound to `127.0.0.1:5244`, `site_url` `…/files`, data in `~/.local/share/openlist`, admin credentials in `~/.local/share/openlist/admin-credentials.txt` mode 0600) with a WebDAV storage `/百度网盘` → `http://127.0.0.1:8080/dav`. `tailscale serve` has `/files → 127.0.0.1:5244/files`; the old `/baidu` path was retired. See `DEPLOY.md`.
+
 ## Architecture
 
 Under `source/internal/`:
