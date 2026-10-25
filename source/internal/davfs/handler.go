@@ -99,9 +99,40 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.put(w, r)
 	case "COPY":
 		h.copy(w, r)
+	case "PROPFIND":
+		h.propfind(w, r)
 	default:
 		h.dav.ServeHTTP(w, r)
 	}
+}
+
+// propfind 在交给 x/net/webdav 之前先把目录列表取出来: x/net 会先写出 207 和根项响应、
+// 之后才 Readdir, 列目录失败(凭证失效/网络错误)就会变成"只有根项的 207", 调用方会误以为
+// 是空目录。预取失败直接回真实错误码, 成功则列表已进缓存, 后续 Readdir/Stat 不再打百度。
+// 同时拒绝 Depth: infinity(缺省即 infinity), 避免递归遍历整个网盘。
+func (h *handler) propfind(w http.ResponseWriter, r *http.Request) {
+	depth := r.Header.Get("Depth")
+	if depth == "" || strings.EqualFold(depth, "infinity") {
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?><D:error xmlns:D="DAV:"><D:propfind-finite-depth/></D:error>`)
+		return
+	}
+	if depth != "0" {
+		p := h.reqPath(r)
+		in, err := h.fs.stat(r.Context(), p)
+		switch {
+		case err == nil && in.dir:
+			if _, err := h.fs.listDir(r.Context(), p); err != nil {
+				h.fail(w, err)
+				return
+			}
+		case err != nil && !errors.Is(err, os.ErrNotExist):
+			h.fail(w, err)
+			return
+		}
+	}
+	h.dav.ServeHTTP(w, r)
 }
 
 func (h *handler) head(w http.ResponseWriter, r *http.Request) {

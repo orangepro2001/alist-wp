@@ -29,9 +29,10 @@ type memEntry struct {
 
 // memEngine 内存网盘。
 type memEngine struct {
-	mu    sync.Mutex
-	files map[string]*memEntry
-	metas int // Meta 调用次数(验证缓存)
+	mu      sync.Mutex
+	files   map[string]*memEntry
+	metas   int   // Meta 调用次数(验证缓存)
+	listErr error // 非 nil 时 List 返回该错误
 }
 
 func newMemEngine() *memEngine {
@@ -65,6 +66,9 @@ func (m *memEngine) Meta(_ context.Context, p string) (*xengine.FileDirectory, e
 func (m *memEngine) List(_ context.Context, dir string, _, _ int, _, _ string) (xengine.FileDirectoryList, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
 	if e, ok := m.files[dir]; !ok || !e.dir {
 		return nil, notFound()
 	}
@@ -430,5 +434,33 @@ func TestMapErr(t *testing.T) {
 	other := &xengine.Error{Code: xengine.ErrNet}
 	if mapErr(other) != error(other) {
 		t.Error("其他错误应原样返回")
+	}
+}
+
+// 列目录失败必须回真实错误码, 不能是"只有根项的 207"(会被当成空目录)。
+func TestPropfindListFailureSurfaces(t *testing.T) {
+	e := newEnv(t)
+	e.eng.listErr = &xengine.Error{Code: xengine.ErrAuth, Message: "登录凭证已失效"}
+	code, body, _ := e.do(t, "PROPFIND", "/dav/docs/", "", map[string]string{"Depth": "1"})
+	if code != 409 || !strings.Contains(body, "登录凭证已失效") {
+		t.Fatalf("凭证失效应 409 并带原因, got %d %q", code, body)
+	}
+	e.eng.listErr = errors.New("net down")
+	if code, _, _ := e.do(t, "PROPFIND", "/dav/docs/", "", map[string]string{"Depth": "1"}); code != 502 {
+		t.Errorf("其他错误应 502, got %d", code)
+	}
+	// Depth: 0 不列目录, 仍可取目录自身属性
+	if code, _, _ := e.do(t, "PROPFIND", "/dav/docs/", "", map[string]string{"Depth": "0"}); code != 207 {
+		t.Errorf("Depth 0 应 207, got %d", code)
+	}
+}
+
+func TestPropfindRejectsInfiniteDepth(t *testing.T) {
+	e := newEnv(t)
+	for _, hdr := range []map[string]string{nil, {"Depth": "infinity"}} {
+		code, body, _ := e.do(t, "PROPFIND", "/dav/", "", hdr)
+		if code != 403 || !strings.Contains(body, "propfind-finite-depth") {
+			t.Errorf("hdr=%v: 应 403 finite-depth, got %d %q", hdr, code, body)
+		}
 	}
 }
